@@ -1,0 +1,125 @@
+package com.example.orderservice.controller;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.orderservice.config.JwtUtil;
+import com.example.orderservice.entity.Order;
+import com.example.orderservice.repository.OrderRepository;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderRepository orderRepository;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+    @Autowired
+    private RestTemplate restTemplate;
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    public static final String QUEUE_NAME = "order.created.queue";
+
+    @PostMapping
+    public ResponseEntity<Order> createOrder(
+            @RequestBody Order orderRequest,
+            @RequestHeader("Authorization") String token) {
+        // This method remains the same
+        try {
+            String jwt = token.substring(7);
+            String userId = jwtUtil.extractUsername(jwt);
+            String productServiceUrl = "http://product-service/products/" + orderRequest.getProductId();
+            ProductDTO product = restTemplate.getForObject(productServiceUrl, ProductDTO.class);
+
+            if (product != null) {
+                double totalPrice = product.getPrice() * orderRequest.getQuantity();
+                orderRequest.setTotalPrice(totalPrice);
+                orderRequest.setUserId(userId);
+                Order savedOrder = orderRepository.save(orderRequest);
+                OrderCreatedEvent event = new OrderCreatedEvent(
+                        savedOrder.getId(),
+                        savedOrder.getProductId(),
+                        savedOrder.getQuantity()
+                );
+                rabbitTemplate.convertAndSend(QUEUE_NAME, event);
+                return ResponseEntity.ok(savedOrder);
+            } else {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+            }
+        } catch (HttpClientErrorException.NotFound ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+    }
+
+    // THIS IS THE MODIFIED ENDPOINT
+    @GetMapping("/my-history")
+    public ResponseEntity<List<OrderHistoryDTO>> getMyOrders(@RequestHeader("Authorization") String token) {
+        try {
+            String jwt = token.substring(7);
+            String userId = jwtUtil.extractUsername(jwt);
+            List<Order> orders = orderRepository.findByUserId(userId);
+
+            // For each order, fetch product details and create a combined DTO
+            List<OrderHistoryDTO> orderHistory = orders.stream().map(order -> {
+                try {
+                    String url = "http://product-service/products/" + order.getProductId();
+                    ProductDTO product = restTemplate.getForObject(url, ProductDTO.class);
+                    // Combine order and product info into our new DTO
+                    return new OrderHistoryDTO(
+                        order.getId(),
+                        order.getProductId(),
+                        product.getName(), // The product name!
+                        product.getImageUrls() != null && !product.getImageUrls().isEmpty() ? product.getImageUrls().get(0) : null, // The first image URL!
+                        order.getQuantity(),
+                        order.getTotalPrice()
+                    );
+                } catch (Exception e) {
+                    // If a product is not found, create a DTO with placeholder info
+                    return new OrderHistoryDTO(order.getId(), order.getProductId(), "Product Not Found", null, order.getQuantity(), order.getTotalPrice());
+                }
+            }).collect(Collectors.toList());
+
+            return ResponseEntity.ok(orderHistory);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+    }
+}
+
+// This DTO now includes fields for the product name and image
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+class OrderHistoryDTO {
+    private Long orderId;
+    private Long productId;
+    private String productName;
+    private String productImageUrl;
+    private int quantity;
+    private double totalPrice;
+}
+
+
+// These DTOs remain the same
+@Data
+class ProductDTO {
+    private Long id;
+    private String name;
+    private double price;
+    private List<String> imageUrls;
+}
+
+record OrderCreatedEvent(Long orderId, Long productId, int quantity) {}

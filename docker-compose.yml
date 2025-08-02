@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  postgres:
+    image: postgres:14.1
+    container_name: microshop-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./postgres-init:/docker-entrypoint-initdb.d
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: microshop-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: microshop-zipkin
+    ports:
+      - "9411:9411"
+
+  # Core Microservices
+  config-server:
+    build: ./config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    environment:
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_URI=https://github.com/anujAJ07/microshop-pro-config.git # Use your repo URL
+      - SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT_LABEL=master # Use 'main' if that is your branch name
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api-gateway/default"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  eureka-server:
+    build: ./eureka-server
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      config-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+
+  auth-server:
+    build: ./auth-server
+    container_name: auth-server
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+  inventory-service:
+    build: ./inventory-service
+    container_name: inventory-service
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+        
+  # ADD THIS NEW SERVICE
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    environment:
+      - SPRING_CONFIG_IMPORT=configserver:http://config-server:8888
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+
+volumes:
+  postgres_data:

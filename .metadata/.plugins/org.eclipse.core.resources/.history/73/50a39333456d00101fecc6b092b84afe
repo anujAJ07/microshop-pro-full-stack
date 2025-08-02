@@ -1,0 +1,97 @@
+package com.example.orderservice.controller;
+
+import lombok.Data;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.orderservice.config.JwtUtil;
+import com.example.orderservice.entity.Order;
+import com.example.orderservice.repository.OrderRepository;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderRepository orderRepository;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+    @Autowired
+    private RestTemplate restTemplate;
+    @Autowired
+    private JwtUtil jwtUtil; // Inject our new JWT utility
+
+    public static final String QUEUE_NAME = "order.created.queue";
+
+    @PostMapping
+    public ResponseEntity<Order> createOrder(
+            @RequestBody Order orderRequest,
+            @RequestHeader("Authorization") String token) { // Accept the Authorization header
+        try {
+            // 1. Extract user ID (email) from the token
+            String jwt = token.substring(7);
+            String userId = jwtUtil.extractUsername(jwt);
+
+            // 2. Call the Product Service to get product details
+            String productServiceUrl = "http://product-service/products/" + orderRequest.getProductId();
+            ProductDTO product = restTemplate.getForObject(productServiceUrl, ProductDTO.class);
+
+            if (product != null) {
+                // 3. Calculate price and set the user ID on the order
+                double totalPrice = product.getPrice() * orderRequest.getQuantity();
+                orderRequest.setTotalPrice(totalPrice);
+                orderRequest.setUserId(userId); // Save the user's ID
+
+                // 4. Save the complete order
+                Order savedOrder = orderRepository.save(orderRequest);
+
+                // 5. Publish the event for the inventory service
+                OrderCreatedEvent event = new OrderCreatedEvent(
+                        savedOrder.getId(),
+                        savedOrder.getProductId(),
+                        savedOrder.getQuantity()
+                );
+                rabbitTemplate.convertAndSend(QUEUE_NAME, event);
+
+                return ResponseEntity.ok(savedOrder);
+            } else {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+            }
+        } catch (HttpClientErrorException.NotFound ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+    }
+
+    // NEW ENDPOINT for fetching order history
+    @GetMapping("/my-history")
+    public ResponseEntity<List<Order>> getMyOrders(@RequestHeader("Authorization") String token) {
+        try {
+            // 1. Extract user ID (email) from the token
+            String jwt = token.substring(7);
+            String userId = jwtUtil.extractUsername(jwt);
+
+            // 2. Find all orders for that user
+            List<Order> orders = orderRepository.findByUserId(userId);
+            return ResponseEntity.ok(orders);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+    }
+}
+
+// DTOs remain the same
+@Data
+class ProductDTO {
+    private Long id;
+    private String name;
+    private double price;
+}
+
+record OrderCreatedEvent(Long orderId, Long productId, int quantity) {}

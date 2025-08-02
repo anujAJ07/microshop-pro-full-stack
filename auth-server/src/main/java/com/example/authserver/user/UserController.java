@@ -1,0 +1,47 @@
+package com.example.authserver.user;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.web.bind.annotation.*;
+
+import com.example.authserver.config.JwtService;
+import com.example.authserver.entity.Address;
+import com.example.authserver.entity.User;
+import com.example.authserver.repository.UserRepository;
+
+@RestController
+@RequestMapping("/api/v1/users")
+public class UserController {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private JwtService jwtService;
+
+    // Endpoint to get the current user's profile
+    @GetMapping("/me")
+    public ResponseEntity<User> getCurrentUser(@RequestHeader("Authorization") String token) {
+        String jwt = token.substring(7);
+        String userEmail = jwtService.extractUsername(jwt);
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        return ResponseEntity.ok(user);
+    }
+
+    // Endpoint to update the current user's address
+    @PutMapping("/me/address")
+    public ResponseEntity<User> updateUserAddress(
+            @RequestHeader("Authorization") String token,
+            @RequestBody Address address) {
+        String jwt = token.substring(7);
+        String userEmail = jwtService.extractUsername(jwt);
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        
+        user.setAddress(address);
+        User updatedUser = userRepository.save(user);
+        return ResponseEntity.ok(updatedUser);
+    }
+}

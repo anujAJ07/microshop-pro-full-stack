@@ -1,0 +1,25 @@
+package com.example.inventoryservice.messaging;
+
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class RabbitMQConfig {
+
+    public static final String QUEUE_NAME = "order.confirmed.queue";
+
+    @Bean
+    public Queue orderConfirmedQueue() {
+        // This will create a durable queue named "order.created.queue"
+        return new Queue(QUEUE_NAME, true);
+    }
+    
+ // ADD THIS BEAN
+    @Bean
+    public MessageConverter jsonMessageConverter() {
+        return new Jackson2JsonMessageConverter();
+    }
+}

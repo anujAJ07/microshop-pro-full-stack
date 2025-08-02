@@ -1,0 +1,29 @@
+# Use an official OpenJDK runtime as a parent image
+FROM openjdk:21-jdk-slim
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy the Maven wrapper files
+COPY .mvn/ .mvn
+COPY mvnw pom.xml ./
+
+# Download project dependencies
+RUN ./mvnw dependency:go-offline
+
+# Copy the project source code
+COPY src ./src
+
+# Package the application
+RUN ./mvnw package -DskipTests
+
+# The final image will only contain the packaged JAR
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=0 /app/target/*.jar app.jar
+
+# Expose the port the service might run on
+EXPOSE 8080
+
+# Run the JAR file
+ENTRYPOINT ["java","-jar","app.jar"]

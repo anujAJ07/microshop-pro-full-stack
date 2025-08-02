@@ -1,0 +1,82 @@
+package com.example.orderservice.controller;
+
+import lombok.Data;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import com.example.orderservice.entity.Order;
+import com.example.orderservice.repository.OrderRepository;
+
+@RestController
+@RequestMapping("/orders")
+public class OrderController {
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+
+    @Autowired
+    private RestTemplate restTemplate; // Inject the RestTemplate
+
+    public static final String QUEUE_NAME = "order.created.queue";
+
+    @PostMapping
+    public ResponseEntity<Order> createOrder(@RequestBody Order orderRequest) {
+        try {
+            // 1. Call the Product Service to get the product details
+            // The URL uses the service name "product-service" directly, thanks to @LoadBalanced
+            String productServiceUrl = "http://product-service/products/" + orderRequest.getProductId();
+            
+            // We use a simple DTO to hold the response from the product service
+            ProductDTO product = restTemplate.getForObject(productServiceUrl, ProductDTO.class);
+
+            // 2. If product is found, calculate the total price
+            if (product != null) {
+                double totalPrice = product.getPrice() * orderRequest.getQuantity();
+                orderRequest.setTotalPrice(totalPrice);
+
+                // 3. Save the complete order to the database
+                Order savedOrder = orderRepository.save(orderRequest);
+
+                // 4. Create and publish the event for the inventory service
+                OrderCreatedEvent event = new OrderCreatedEvent(
+                        savedOrder.getId(),
+                        savedOrder.getProductId(),
+                        savedOrder.getQuantity()
+                );
+                rabbitTemplate.convertAndSend(QUEUE_NAME, event);
+                System.out.println("Published order created event for order ID: " + savedOrder.getId());
+
+                return ResponseEntity.ok(savedOrder);
+            } else {
+                // This case should ideally not happen if the product exists
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+            }
+        } catch (HttpClientErrorException.NotFound ex) {
+            // This is a crucial error handling block. If the product-service returns a 404,
+            // it means the product ID is invalid, so we can't create the order.
+            System.err.println("Product not found for ID: " + orderRequest.getProductId());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+    }
+}
+
+// A simple Data Transfer Object (DTO) to represent the data we get from the Product Service.
+// It doesn't need to be an entity.
+@Data
+class ProductDTO {
+    private Long id;
+    private String name;
+    private double price;
+    // We don't need the other fields like description or imageUrls for this operation
+}
+
+// A simple record to define the message structure for RabbitMQ
+record OrderCreatedEvent(Long orderId, Long productId, int quantity) {}

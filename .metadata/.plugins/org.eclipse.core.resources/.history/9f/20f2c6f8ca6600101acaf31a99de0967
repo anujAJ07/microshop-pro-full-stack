@@ -1,0 +1,13 @@
+# Assign a random available port
+server.port=8083
+
+# Give this application a name for Eureka
+spring.application.name=ORDER-SERVICE
+
+# Tell this service where to find the Eureka Server
+eureka.client.service-url.defaultZone=http://localhost:8761/eureka
+
+# --- H2 Database Settings ---
+spring.h2.console.enabled=true
+spring.datasource.url=jdbc:h2:mem:orderdb
+spring.jpa.hibernate.ddl-auto=update

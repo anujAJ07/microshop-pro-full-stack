@@ -1,0 +1,28 @@
+package com.example.orderservice.entity;
+
+import com.example.orderservice.OrderStatus;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.Data;
+
+@Entity
+@Data
+@Table(name = "orders")
+public class Order {
+
+    @Id
+    @GeneratedValue
+    private Long id;
+    private Long productId;
+    private int quantity;
+    private double totalPrice;
+    private String userId;
+
+    @Enumerated(EnumType.STRING) // Store the enum as a string in the database
+    private OrderStatus status;
+}
